@@ -13,6 +13,7 @@ geom_image(
   na.rm = FALSE,
   by = "width",
   nudge_x = 0,
+  is_cairo_svg = FALSE,
   ...
 )
 }
@@ -33,6 +34,8 @@ geom_image(
 
 \item{nudge_x}{horizontal adjustment to nudge image}
 
+\item{is_cairo_svg}{logical, whether to process the image as cairo svg. See notes.}
+
 \item{...}{additional parameters}
 }
 \value{
@@ -41,11 +44,20 @@ geom layer
 \description{
 geom layer for visualizing image files
 }
+\note{
+If image is compatible with the
+\href{https://cran.r-project.org/package=grImport2}{{grImport2}} package, then
+setting \code{is_cairo_svg = TRUE} and printing to \code{gridsvg()} can generate a
+fully vectorized plot. See examples.
+}
 \examples{
 \dontrun{
 library("ggplot2")
 library("ggimage")
+
 set.seed(2017-02-21)
+
+## raster
 d <- data.frame(x = rnorm(10),
                 y = rnorm(10),
                 image = sample(c("https://www.r-project.org/logo/Rlogo.png",
@@ -53,6 +65,19 @@ d <- data.frame(x = rnorm(10),
                               size=10, replace = TRUE)
                )
 ggplot(d, aes(x, y)) + geom_image(aes(image=image))
+
+## full vector
+data <- data.frame(
+  x = rnorm(10),
+  y = rnorm(10),
+  image = system.file("extdata/Rlogo_cairo.svg", package = "ggimage")
+)
+
+gridsvg("gg_full_vector.svg", strict = FALSE)
+  data |>
+    ggplot(aes(x, y)) +
+    geom_image(aes(image = image), size = .1, is_cairo_svg = TRUE)
+dev.off()
 }
 }
 \author{

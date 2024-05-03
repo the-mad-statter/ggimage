@@ -15,7 +15,13 @@
 ##' @param na.rm logical, whether remove NA values
 ##' @param by one of 'width' or 'height'
 ##' @param nudge_x horizontal adjustment to nudge image
+##' @param is_cairo_svg logical, whether to process the image as cairo svg. See notes.
 ##' @param ... additional parameters
+##' @note
+##' If image is compatible with the
+##' [{grImport2}](https://cran.r-project.org/package=grImport2) package, then
+##' setting `is_cairo_svg = TRUE` and printing to `gridsvg()` can generate a
+##' fully vectorized plot. See examples.
 ##' @return geom layer
 ##' @importFrom ggplot2 layer
 ##' @export
@@ -23,7 +29,10 @@
 ##' \dontrun{
 ##' library("ggplot2")
 ##' library("ggimage")
+##'
 ##' set.seed(2017-02-21)
+##'
+##' ## raster
 ##' d <- data.frame(x = rnorm(10),
 ##'                 y = rnorm(10),
 ##'                 image = sample(c("https://www.r-project.org/logo/Rlogo.png",
@@ -31,11 +40,25 @@
 ##'                               size=10, replace = TRUE)
 ##'                )
 ##' ggplot(d, aes(x, y)) + geom_image(aes(image=image))
+##'
+##' ## full vector
+##' data <- data.frame(
+##'   x = rnorm(10),
+##'   y = rnorm(10),
+##'   image = system.file("extdata/Rlogo_cairo.svg", package = "ggimage")
+##' )
+##'
+##' gridsvg("gg_full_vector.svg", strict = FALSE)
+##'   data |>
+##'     ggplot(aes(x, y)) +
+##'     geom_image(aes(image = image), size = .1, is_cairo_svg = TRUE)
+##' dev.off()
 ##' }
 ##' @author Guangchuang Yu
+##' @md
 geom_image <- function(mapping=NULL, data=NULL, stat="identity",
                        position="identity", inherit.aes=TRUE,
-                       na.rm=FALSE, by="width", nudge_x = 0, ...) {
+                       na.rm=FALSE, by="width", nudge_x = 0, is_cairo_svg = FALSE, ...) {
 
     by <- match.arg(by, c("width", "height"))
 
@@ -52,6 +75,7 @@ geom_image <- function(mapping=NULL, data=NULL, stat="identity",
             by = by,
             nudge_x = nudge_x,
             ##angle = angle,
+            is_cairo_svg = is_cairo_svg,
             ...),
         check.aes = FALSE
     )
@@ -71,12 +95,12 @@ GeomImage <- ggproto("GeomImage", Geom,
                          data[which(data$subset),]
                      },
 
-                     default_aes = aes(image=system.file("extdata/Rlogo.png", package="ggimage"), 
+                     default_aes = aes(image=system.file("extdata/Rlogo.png", package="ggimage"),
                                        size=0.05, colour = NULL, angle = 0, alpha=1),
 
                      draw_panel = function(data, panel_params, coord, by, na.rm=FALSE,
                                            .fun = NULL, height, image_fun = NULL,
-                                           hjust=0.5, nudge_x = 0, nudge_y = 0, asp=1) {
+                                           hjust=0.5, nudge_x = 0, nudge_y = 0, asp=1, is_cairo_svg = FALSE) {
                          data$x <- data$x + nudge_x
                          data$y <- data$y + nudge_y
                          data <- coord$transform(data, panel_params)
@@ -98,9 +122,9 @@ GeomImage <- ggproto("GeomImage", Geom,
                          adjs[is.infinite(adjs)] <- 1
 
                          grobs <- lapply(seq_len(nrow(data)), function(i){
-                              imageGrob(x = data$x[i], 
-                                        y = data$y[i], 
-                                        size = data$size[i], 
+                              imageGrob(x = data$x[i],
+                                        y = data$y[i],
+                                        size = data$size[i],
                                         img = data$image[i],
                                         colour = data$colour[i],
                                         alpha = data$alpha[i],
@@ -109,7 +133,8 @@ GeomImage <- ggproto("GeomImage", Geom,
                                         image_fun = image_fun,
                                         hjust = hjust,
                                         by = by,
-                                        asp = asp
+                                        asp = asp,
+                                        is_cairo_svg = is_cairo_svg
                               )
                              })
                          ggname("geom_image", gTree(children = do.call(gList, grobs)))
@@ -131,19 +156,37 @@ GeomImage <- ggproto("GeomImage", Geom,
 ##' @importFrom grDevices col2rgb
 ##' @importFrom methods is
 ##' @importFrom tools file_ext
-imageGrob <- function(x, y, size, img, colour, alpha, angle, adj, image_fun, hjust, by, asp=1, default.units='native'){
+imageGrob <- function(x, y, size, img, colour, alpha, angle, adj, image_fun, hjust, by, asp=1, default.units='native', is_cairo_svg = FALSE){
+    if (is_cairo_svg) {
+        if (!requireNamespace("grImport2", quietly = TRUE))
+            stop(
+                paste(
+                    'Processing an image with `is_cairo_svg = TRUE` requires the {grImport2} package.',
+                    'Please install {grImport2} (e.g., `install.packages("grImport2")`).',
+                    sep = '\n'
+                )
+            )
+    }
+
     if (is.na(img)){
         return(zeroGrob())
     }
     if (!is(img, "magick-image")) {
         if (tools::file_ext(img) == "svg") {
-            img <- image_read_svg(img)
+            if (is_cairo_svg)
+                img <- grImport2::readPicture(img)
+            else
+                img <- image_read_svg(img)
         } else if (tools::file_ext(img) == "pdf") {
             img <- image_read_pdf(img)
         } else {
             img <- image_read(img)
         }
-        asp <- getAR2(img)/asp
+
+        if (is_cairo_svg)
+            asp <- img@summary@xscale[2] / img@summary@yscale[1] / asp
+        else
+            asp <- getAR2(img)/asp
     }
 
     if (size == Inf) {
@@ -167,7 +210,7 @@ imageGrob <- function(x, y, size, img, colour, alpha, angle, adj, image_fun, hju
 
     if (!is.null(image_fun)) {
         img <- image_fun(img)
-    }    
+    }
 
     if (angle != 0) {
         img <- image_rotate(img, angle)
@@ -176,8 +219,19 @@ imageGrob <- function(x, y, size, img, colour, alpha, angle, adj, image_fun, hju
     if (!is.null(colour)){
         img <- color_image(img, colour, alpha)
     }
-    
+
     if (size == Inf){
+      if (is_cairo_svg) {
+        grob <- grImport2::pictureGrob(
+          picture = img,
+          x = x,
+          y = y,
+          width = width,
+          height = height,
+          default.units = default.units,
+          ext = "gridSVG"
+        )
+      } else {
        grob <- rasterGrob(x = x,
                           y = y,
                           image = img,
@@ -185,14 +239,26 @@ imageGrob <- function(x, y, size, img, colour, alpha, angle, adj, image_fun, hju
                           height = height,
                           width = width
                           )
+      }
     }else{
+      if (is_cairo_svg) {
+        grob <- grImport2::pictureGrob(
+          picture = img,
+          x = x,
+          y = y,
+          height = height,
+          default.units = default.units,
+          ext = "gridSVG"
+        )
+      } else {
        grob <- rasterGrob(
                           x = x,
                           y = y,
                           image = img,
                           default.units = default.units,
                           height = height
-                       )        
+                       )
+      }
     }
     return(grob)
 }
@@ -214,7 +280,7 @@ imageGrob <- function(x, y, size, img, colour, alpha, angle, adj, image_fun, hju
 #         w <- convertWidth(y$width, "cm", valueOnly = TRUE)
 #         ## Decide how the units should be equal
 #         ## y$width <- y$height <- unit(sqrt(h*w), "cm")
-# 
+#
 #         y$width <- unit(w, "cm")
 #         y$height <- unit(h, "cm")
 #         x$children[[i]] <- y
